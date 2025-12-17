@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 import re
+from scipy.ndimage import gaussian_filter1d
 
 def get_clean_df(df : pd.DataFrame) -> pd.DataFrame:
     """
@@ -121,3 +122,121 @@ def get_capacitancy_points(df : pd.DataFrame):
     capacitancy_frame = pd.DataFrame(capacitancy_points, columns=["date", "capacitancy"])
     
     return capacitancy_frame
+
+def get_window_data(kind: str, df: pd.DataFrame):
+    """
+    Gives the splits X and y for training with windows
+    
+    Parameters
+    ----------
+        kind : {'single', 'multi'}
+            Selects wether you will do singular or multi-output
+        df : `pd.DataFrame`
+            The dataframe with the data already well structured
+
+    Returns
+    ----------
+        X : `pd.DataFrame`
+            A DataFrame with the input
+        y : `pd.DataFrame`
+            A DataFrame with the expected output
+    """
+
+    X_new = df.copy()
+
+    if kind == "single":
+        X_new["t0"] = df["soil_moisture_40"]
+        X_new["t1"] = df["soil_moisture_40"].shift(-1)
+        X_new["t2"] = df["soil_moisture_40"].shift(-2)
+        X_new["res"] = df["soil_moisture_40"].shift(-3)
+        X_new["season_autumn"] = df["season_autumn"].shift(-3).astype(bool)
+        X_new["season_summer"] = df["season_summer"].shift(-3).astype(bool)
+        X_new["season_spring"] = df["season_spring"].shift(-3).astype(bool)
+        X_new["next_step"] = df["steps_from_peak"].shift(-3)
+        X_new["hour"] = df["hour"].shift(-2)
+        X_new["hour_s"] = np.sin(2 * np.pi * df["hour"])
+        X_new["hour_c"] = np.cos(2 * np.pi * df["hour"])
+
+        condition = X_new["next_step"] >= 3
+
+        condition_full = ~X_new["t2"].isna() & condition
+
+        X_new = X_new.loc[condition_full]
+
+        y_new = X_new["res"] - X_new["t2"]
+        X_new = X_new[["t0", "t1", "t2", "next_step", "hour_s", "hour_c", "season_autumn", "season_spring", "season_summer"]]
+
+        return X_new, y_new
+    
+
+def create_standarized_gradients(df : pd.DataFrame) -> pd.DataFrame:
+    orig_values = df["soil_moisture_40"].to_numpy()
+    values = gaussian_filter1d(orig_values, sigma=1)
+    df["soil_moisture_40"] = values
+
+    df["gradient"] = df["soil_moisture_40"].diff()
+    df["gradient_std"] = (df["gradient"] - df["gradient"].mean())/ df["gradient"].std()
+
+    return df
+
+def get_season(month):
+    if month in [12, 1, 2]:
+        return 'winter'
+    elif month in [3, 4, 5]:
+        return 'spring'
+    elif month in [6, 7, 8]:
+        return 'summer'
+    else:
+        return 'autumn'
+
+def get_plains_dates(df : pd.DataFrame, threshold_down : float, threshold_up : float) -> pd.Series:
+    filtered_gradients = (df["gradient_std"] > threshold_down) & (df["gradient_std"] <= threshold_up)
+    filtered_dates = df.loc[filtered_gradients, "date"]
+
+    return filtered_dates
+
+
+def create_steps_from_irrigation(df : pd.DataFrame) -> pd.DataFrame:
+
+    df["steps_from_peak"] = 0
+
+    current_steps = -1
+
+    for row in df.iloc[1:].itertuples(index=True):
+        current_steps += 1
+
+        if row.irrigation_volume_0 == 0:
+            df.loc[row.Index, "steps_from_peak"] = current_steps
+            
+        else:
+            current_steps = -1
+
+    return df
+
+def get_dataset_from_df(df : pd.DataFrame, threshold_up : float) -> pd.DataFrame:
+    df_decay = df[df["irrigation_volume_0"] == 0].copy()
+    df_decay["up"] = df_decay["gradient_std"] > threshold_up
+    df_decay = df_decay.drop(columns=["irrigation_volume_0", "irrigation_volume_accumulated_0", "gradient", "gradient_std"])[1:].reset_index(drop=True)
+    df_decay["hour"] = df_decay["date"].dt.hour
+    df_decay["season"] = df_decay["date"].dt.month.apply(get_season)
+    df_decay = pd.get_dummies(df_decay, columns=['season'])
+    df_decay["hour_s"] = np.sin(2 * np.pi * df_decay["hour"])
+    df_decay["hour_c"] = np.cos(2 * np.pi * df_decay["hour"])
+    df_decay = df_decay.drop(columns=["soil_moisture_20", "soil_moisture_60", "hour"])[:-1]
+    
+    return df_decay
+
+def get_inputs_plain_predictor(df : pd.DataFrame) -> pd.DataFrame:
+    
+    X = df[["soil_moisture_40", "steps_from_peak", "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c"]]
+
+    return X
+
+def separate_slopes_by_groups(df : pd.DataFrame) -> pd.DataFrame:
+    df_decay = df.copy()
+    restricted_mask = ~df_decay["plain"] & ~df["up"]
+    group_start = restricted_mask & ~restricted_mask.shift(fill_value=False)
+    df_decay["group"] = group_start.cumsum()
+    df_decay.loc[~restricted_mask, "group"] = np.nan
+    
+    return df_decay

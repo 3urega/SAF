@@ -4,6 +4,7 @@ from sklearn.metrics import mean_squared_error
 from sklearn.ensemble import GradientBoostingRegressor
 import torch.nn as nn
 import torch
+import joblib
 import pandas as pd
 import numpy as np
 
@@ -36,7 +37,7 @@ def get_XGBoost(X, Y):
     print(y_pred)
 
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    print("RMSE:", rmse)
+    print("MSE:", rmse)
     
     return bst
 
@@ -48,3 +49,14 @@ def get_GradientBoost(X, y, n_estimators=200, max_depth = 3):
     model.fit(X_train, y_train)
     
     return model
+
+def get_plain_predictor() -> xgb.XGBClassifier:
+    """
+    It gives the XGBoost trained to predict plains
+
+    The input of the model are `["soil_moisture_40", "steps_from_peak", "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c"]`
+
+    Returns a true or false classification for plain
+    """
+
+    return joblib.load("models/XGBoost_plain_classifier.joblib")
