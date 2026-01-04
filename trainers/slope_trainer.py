@@ -39,11 +39,6 @@ df_decay.head()
 X = df_decay[["soil_moisture_40", "steps_from_peak", "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c"]]
 y = df_decay["plain"]
 
-import xgboost as xgb
-from sklearn.model_selection import cross_val_score
-import optuna
-from sklearn.model_selection import StratifiedKFold
-
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )

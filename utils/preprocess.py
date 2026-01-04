@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 import re
+from sklearn.linear_model import RANSACRegressor, LinearRegression
 from scipy.ndimage import gaussian_filter1d
 
 def get_clean_df(df : pd.DataFrame) -> pd.DataFrame:
@@ -237,6 +238,68 @@ def separate_slopes_by_groups(df : pd.DataFrame) -> pd.DataFrame:
     restricted_mask = ~df_decay["plain"] & ~df["up"]
     group_start = restricted_mask & ~restricted_mask.shift(fill_value=False)
     df_decay["group"] = group_start.cumsum()
-    df_decay.loc[~restricted_mask, "group"] = np.nan
+    df_decay.loc[~restricted_mask, "group"] = -1
+    df_decay["group"] = df_decay["group"].astype(int)
+
     
     return df_decay
+
+def compute_group_slopes(df : pd.DataFrame) -> pd.DataFrame:
+    
+    df_decay_grouped = df.copy() 
+
+    num_groups = df_decay_grouped["group"].unique()[-1]
+
+    df_decay_grouped["slope"] = 0
+
+    for i in range(1, num_groups+1):
+
+        y = df_decay_grouped.loc[df_decay_grouped["group"] == i, "soil_moisture_40"].values
+        x = np.array([i for i in range(len(y))])
+
+        if len(y) > 3:
+
+            x0, y0 = x[0], y[0]
+
+            X = (x - x0).reshape(-1, 1)
+            Y = y - y0
+
+            ransac = RANSACRegressor(
+                estimator=LinearRegression(fit_intercept=False),
+                min_samples=3,
+                residual_threshold=1.5,  # tune this
+                random_state=0
+            )
+
+
+            ransac.fit(X, Y)
+
+            m = ransac.estimator_.coef_[0]
+
+            df_decay_grouped.loc[df_decay_grouped["group"] == i, "slope"] = m
+
+        else:
+            df_decay_grouped.loc[df_decay_grouped["group"] == i, "plain"] = True
+            df_decay_grouped.loc[df_decay_grouped["group"] == i, "group"] = -1
+        
+    return df_decay_grouped
+
+def compute_slopes_dataset(df : pd.DataFrame) -> pd.DataFrame:
+
+    df_decay_grouped = df.copy()
+
+    df_slopes = df_decay_grouped.loc[df_decay_grouped["group"] > 1]
+    first_three_per_group = df_slopes.groupby('group').apply(lambda x: x.iloc[:3]).reset_index(drop=True).copy()
+    first_three_per_group['point_idx'] = first_three_per_group.groupby('group').cumcount() + 1
+    wide_values = first_three_per_group.pivot(index='group', columns='point_idx', values='soil_moisture_40')
+    wide_values.columns = ['moisture_1', 'moisture_2', 'moisture_3']
+
+    first_row_vars = df_slopes.groupby('group').first().reset_index()
+    final_df = first_row_vars.merge(wide_values.reset_index(), on='group')
+
+    final_df = final_df[["date", "moisture_1", "moisture_2", "moisture_3" , "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c", "slope"]]
+
+    X = final_df[["moisture_1", "moisture_2", "moisture_3" , "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c"]]
+    y = final_df[["slope"]]
+
+    return X, y
