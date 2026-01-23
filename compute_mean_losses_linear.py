@@ -211,7 +211,7 @@ for idx in tqdm(df_predicted.index, desc="Processing rows:", unit="row"):
             errors = pd.DataFrame(error_rows)
 
             mae_per_step = errors.mean().to_numpy()
-            np.save("errors_linear.npy", mae_per_step)
+            np.save("results/errors_linear.npy", mae_per_step)
 
         # create_frame(new_prediction.loc[beginning_idx:], df_constricted,epoch,final_predicted)
         # create_frame_pointed(df_predicted, new_prediction, epoch, idx)
@@ -219,4 +219,4 @@ for idx in tqdm(df_predicted.index, desc="Processing rows:", unit="row"):
 print("Saving errors")
 errors = pd.DataFrame(error_rows)
 mae_per_step = errors.mean().to_numpy()
-np.save("errors_linear.npy", mae_per_step)
+np.save("results/errors_linear.npy", mae_per_step)

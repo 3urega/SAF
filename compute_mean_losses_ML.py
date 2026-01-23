@@ -235,7 +235,7 @@ for idx in tqdm(df_predicted.index, desc="Processing rows:", unit="row"):
         errors = pd.DataFrame(error_rows)
 
         mae_per_step = errors.mean().to_numpy()
-        np.save("errors_ML_nowinter.npy", mae_per_step)
+        np.save("results/errors_ML_nowinter.npy", mae_per_step)
         
     if df_predicted.loc[idx, "date"].month == end_date.month and first_month_seen:
         print("Last month of year")
@@ -244,6 +244,6 @@ for idx in tqdm(df_predicted.index, desc="Processing rows:", unit="row"):
 print("Saving errors")
 errors = pd.DataFrame(error_rows)
 mae_per_step = errors.mean().to_numpy()
-np.save("errors_ML_nowinter.npy", mae_per_step)
+np.save("results/errors_ML_nowinter.npy", mae_per_step)
 
             
