@@ -1,6 +1,18 @@
-write_file = open("data/3274-Device-Data-Fix.csv", "w")
+import argparse
 
-with open("data/3274-Device Data.csv", "r") as f:
+parser = argparse.ArgumentParser(description="Program to fix given device data")
+
+parser.add_argument("--path", type=str, required=True, help="Path to data csv")
+
+args = parser.parse_args()
+
+read_path = args.path
+
+write_path = read_path[:-4]+"-Fix.csv"
+
+write_file = open(write_path, "w")
+
+with open(read_path, "r") as f:
     header = next(f)
     write_file.write(header.replace("\"", ""))
     for line in f:

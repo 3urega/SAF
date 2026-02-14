@@ -100,19 +100,6 @@ for row in df_constricted.iloc[1:].itertuples(index=True):
     down = row.difference <= 0
     current_steps += 1
     
-    # if row.irrigation_volume_0 != 0:
-    #     up = True
-    #     df_constricted.loc[row.Index, "peak"] = True
-    #     current_steps = -1
-    #     counter = 0
-    # elif not up:
-    #     df_constricted.loc[row.Index, "steps_from_peak"] = current_steps
-    # else:
-    #     counter += 1
-    #     if counter > 2:
-    #         counter = 0
-    #         up = False
-    
     if not down:
         df_constricted.loc[row.Index, "peak"] = True
         current_steps = -1

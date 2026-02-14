@@ -15,34 +15,8 @@ def get_season(month):
     elif month in [6, 7, 8]:
         return 'summer'
     else:
-        return 'autumn'
-
-THRESH_DOWN = -0.1
-THRESH_UP = 0.1
-
-df = pd.read_csv("data/1082-Device-Data-Fix.csv")
-df = preprocess.get_clean_df(df)
-df = preprocess.create_standarized_gradients(df)
-df = preprocess.create_steps_from_irrigation(df)
-
-plain_dates = preprocess.get_plains_dates(df, THRESH_DOWN, THRESH_UP)
-
-df["plain"] = False
-df.loc[df["date"].isin(plain_dates), "plain"] = True
-
-plain_dates = preprocess.get_plains_dates(df, THRESH_DOWN, THRESH_UP)
-df["plain"] = False
-df.loc[df["date"].isin(plain_dates), "plain"] = True
-df_decay = preprocess.get_dataset_from_df(df, THRESH_UP)
-df_decay.head()
-
-X = df_decay[["soil_moisture_40", "steps_from_peak", "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c"]]
-y = df_decay["plain"]
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
-
+        return 'autumn'  
+    
 def objective(trial):
 
     params = {
@@ -76,32 +50,55 @@ def objective(trial):
     return mean_auc
 
 
-study = optuna.create_study(direction="maximize")
-study.optimize(objective, n_trials=50, show_progress_bar=True)
-print("Best trial:")
-print("  Value (AUC):", study.best_value)
-print("  Params:")
-for key, value in study.best_params.items():
-    print(f"    {key}: {value}")
+if __name__ == "__main__":
 
-print("Best hyperparameters:", study.best_params)
-print("Best loss:", study.best_value)
+    THRESH_DOWN = -0.1
+    THRESH_UP = 0.1
 
-best_parameters = study.best_params.copy()
+    df = pd.read_csv("data/1082-Device-Data-Fix.csv")
+    df = preprocess.get_clean_df(df)
+    df = preprocess.create_standarized_gradients(df)
+    df = preprocess.create_steps_from_irrigation(df)
 
-test_model = xgb.XGBClassifier(**best_parameters)
-test_model.fit(X_train, y_train)
+    plain_dates = preprocess.get_plains_dates(df, THRESH_DOWN, THRESH_UP)
+    df["plain"] = False
+    df.loc[df["date"].isin(plain_dates), "plain"] = True
+    df_decay = preprocess.get_dataset_from_df(df, THRESH_UP)
+    df_decay.head()
 
-y_proba = test_model.predict_proba(X_test)[:, 1]
-y_pred = test_model.predict(X_test)
+    X = df_decay[["soil_moisture_40", "steps_from_peak", "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c"]]
+    y = df_decay["plain"]
 
-test_auc = roc_auc_score(y_test, y_proba)
-test_acc = accuracy_score(y_test, y_pred)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
-print(f"Test AUC: {test_auc:.4f}")
-print(f"Test Accuracy: {test_acc:.4f}")
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=50, show_progress_bar=True)
+    print("Best trial:")
+    print("  Value (AUC):", study.best_value)
+    print("  Params:")
+    for key, value in study.best_params.items():
+        print(f"    {key}: {value}")
 
-final_model = xgb.XGBClassifier(**best_parameters)
-final_model.fit(X, y)
+    print("Best hyperparameters:", study.best_params)
+    print("Best loss:", study.best_value)
 
-joblib.dump(final_model, "models/XGBoost_plain_classifier.joblib")
+    best_parameters = study.best_params.copy()
+
+    test_model = xgb.XGBClassifier(**best_parameters)
+    test_model.fit(X_train, y_train)
+
+    y_proba = test_model.predict_proba(X_test)[:, 1]
+    y_pred = test_model.predict(X_test)
+
+    test_auc = roc_auc_score(y_test, y_proba)
+    test_acc = accuracy_score(y_test, y_pred)
+
+    print(f"Test AUC: {test_auc:.4f}")
+    print(f"Test Accuracy: {test_acc:.4f}")
+
+    final_model = xgb.XGBClassifier(**best_parameters)
+    final_model.fit(X, y)
+
+    joblib.dump(final_model, "models/XGBoost_plain_classifier.joblib")
