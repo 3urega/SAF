@@ -73,57 +73,6 @@ def format_GradientBoost(input_vec):
     input_vec = pd.DataFrame(data=input_vec, columns=input_names)
     return input_vec
     
-def get_capacitancy_points(df : pd.DataFrame):
-    
-    difference_df = df.copy()
-
-    difference_df['difference'] = np.concat([[np.nan], np.diff(difference_df['soil_moisture_40'])])
-    difference_df['difference2'] = np.concat([[np.nan], np.diff(difference_df['difference'])])
-
-    gradient_marker = []
-    up_found = False
-    down_found = False
-
-    capacitancy_points = []
-
-    found = 0
-    beta = 0.3
-
-    for row in difference_df.iloc[1:].itertuples(index=True):
-        dx = row.difference
-        down = row.irrigation_volume_0 == 0 and dx < 0
-        if not up_found and row.irrigation_volume_0 > 0:
-            up_found = True
-            continue
-        if up_found and not down_found and down:
-            down_found = True
-            value = row.difference2
-            found = 0
-            continue
-        if up_found and down_found:
-            prev_value = value
-            value = row.difference2
-            
-            if (prev_value < 0 and value >= 0) and found == 0:
-                found += 1
-            elif found > 0 and value >= 0:
-                found += 1
-            else:
-                found = 0
-                
-            if found == 3:
-                gradient_marker.append(row.date)
-                up_found = False
-                down_found = False
-                if len(capacitancy_points) > 0:
-                    capacitancy_points.append((row.date, beta*capacitancy_points[-1][1] + (1 - beta)*row.soil_moisture_40))
-                else:
-                    capacitancy_points.append((row.date, row.soil_moisture_40))
-                
-    capacitancy_frame = pd.DataFrame(capacitancy_points, columns=["date", "capacitancy"])
-    
-    return capacitancy_frame
-
 def get_window_data(kind: str, df: pd.DataFrame):
     """
     Gives the splits X and y for training with windows
@@ -169,7 +118,6 @@ def get_window_data(kind: str, df: pd.DataFrame):
 
         return X_new, y_new
     
-
 def create_standarized_gradients(df : pd.DataFrame) -> pd.DataFrame:
     orig_values = df["soil_moisture_40"].to_numpy()
     values = gaussian_filter1d(orig_values, sigma=1)
@@ -195,7 +143,6 @@ def get_plains_dates(df : pd.DataFrame, threshold_down : float, threshold_up : f
     filtered_dates = df.loc[filtered_gradients, "date"]
 
     return filtered_dates
-
 
 def create_steps_from_irrigation(df : pd.DataFrame) -> pd.DataFrame:
 

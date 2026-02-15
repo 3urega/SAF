@@ -162,7 +162,7 @@ class MLModel():
             os.makedirs("models/weights", exist_ok=True)
             joblib.dump(self.regressor, "models/weights/MLModel.joblib")
         
-        print(f"Trained with training error : {train_error}")
+        logger.info(f"Trained with training error : {train_error}")
         
     def predict_steps(self, previous_data : Union[List[float], np.ndarray], current_date : pd.Timestamp, current_step : int, future_steps : int) -> List[float]:
         """
@@ -209,7 +209,6 @@ class MLModel():
             
             model_input = self._get_model_input(predictions[-1][-1], current_step, current_date)
             
-        print(predictions)
         predictions = np.concat(predictions)[:future_steps]
         
         logger.info("Prediction succeed")

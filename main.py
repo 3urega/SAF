@@ -39,17 +39,20 @@ if __name__ == "__main__":
     model = None
     
     if MODEL_TO_USE == "Linear":
-        #This training takes quite a lot of time since it searches for the best possible
-        #parameters, so I'd recommend to train once and load everytime after that.
+        #This training takes a bit of time since it searches for the best possible
+        #parameters, so I'd recommend to train once and load everytime after that to
+        #avoid any overhead.
         model = LinearModel()
-        model.load_plain_model("models/weights/XGBoost_plain_classifier.joblib")
+        #model.train_plain_model(df.copy(), save_model=True)
+        model.load_plain_model("models/weights/XGBoost_plain_classifier_new.joblib")
         logger.info("Selected linear model")
         
     elif MODEL_TO_USE == "ML":
         #This gets trained really fast, so it is not really needed to store a model
         #however, it can be saved and loaded if there is the need.
         model = MLModel()
-        model.train(df, save_model=False)
+        model.train(df.copy(), save_model=False)
+        #model.load_model("models/weights/MLModel.joblib")
         logger.info("Selected ML model")
         
     else:

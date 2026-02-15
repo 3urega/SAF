@@ -115,7 +115,7 @@ class LinearModel():
             Whether to save the trained model or not. It will be saved in `models/weights/XGBoost_plain_classifier.joblib`. (Default is `False`)
         """
         self._check_dataframe(df)
-        df_processed = self._process_dataframe(df)
+        df_processed = self._process_dataframe(df.copy())
         
         df_decay = preprocess.get_dataset_from_df(df_processed, self.THRESH_UP)
         
@@ -127,7 +127,7 @@ class LinearModel():
             os.makedirs("models/weights", exist_ok=True)
             joblib.dump(self.plain_detector, "models/weights/XGBoost_plain_classifier.joblib")
             
-        print("Model trained")
+        logger.info("Model trained")
     
     def load_plain_model(self, path : str):
         """
