@@ -132,7 +132,7 @@ class MLModel():
         
         raise TypeError(f"Expected XGBRegressor, got {type(regressor).__name__}")
    
-    def train(self, df : pd.DataFrame, save_model : bool = False):
+    def train(self, df : pd.DataFrame, save_model : bool = False, model_name : str = "MLModel"):
         """
         Trains the model with the given dataframe.
         
@@ -142,6 +142,8 @@ class MLModel():
             A DataFrame that must contain at least soil_moisture_40 and its associated timestamps (`[soil_moisture_40, date]`)
         save_model : bool, optional
             Whether to save the trained model or not. It will be saved in `models/weights/MLModel.joblib`. (Default is `False`)
+        model_name : str, optional
+            The name you want to save the model with. (Default is 'MLModel')
         """
         self._check_dataframe(df)
         
@@ -160,7 +162,7 @@ class MLModel():
         
         if save_model:
             os.makedirs("models/weights", exist_ok=True)
-            joblib.dump(self.regressor, "models/weights/MLModel.joblib")
+            joblib.dump(self.regressor, f"models/weights/{model_name}.joblib")
         
         logger.info(f"Trained with training error : {train_error}")
         

@@ -103,7 +103,7 @@ class LinearModel():
         final_model.fit(X, y)
         return final_model
         
-    def train_plain_model(self, df : pd.DataFrame, save_model : bool = False):
+    def train_plain_model(self, df : pd.DataFrame, save_model : bool = False, model_name : str = "XGBoost_plain_classifier"):
         """
         Trains the plain detector model with the given dataframe.
         
@@ -113,6 +113,8 @@ class LinearModel():
             A DataFrame that must contain at least soil_moisture_40 and its associated timestamps (`[soil_moisture_40, date]`)
         save_model : bool, optional
             Whether to save the trained model or not. It will be saved in `models/weights/XGBoost_plain_classifier.joblib`. (Default is `False`)
+        model_name : str, optional
+            The name you want to save the model with. (Default is 'XGBoost_plain_classifier')
         """
         self._check_dataframe(df)
         df_processed = self._process_dataframe(df.copy())
@@ -125,7 +127,7 @@ class LinearModel():
         
         if save_model:
             os.makedirs("models/weights", exist_ok=True)
-            joblib.dump(self.plain_detector, "models/weights/XGBoost_plain_classifier.joblib")
+            joblib.dump(self.plain_detector, f"models/weights/{model_name}.joblib")
             
         logger.info("Model trained")
     
