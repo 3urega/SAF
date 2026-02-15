@@ -1,11 +1,23 @@
 from logger import logging_formater
 import logging
-from models import LinearModel, MLModel
+from models import LinearModel, MLModel, CapacitanceDetector
 from utils import preprocess
 import pandas as pd
 import matplotlib.pyplot as plt
 
-MODEL_TO_USE = "Linear" #Linear/ML
+"""
+Usage example. In production you would want to accumulate seen points
+and get the current step and date just by counting number of points 
+and knowing the first date. With that you avoid redundant communications 
+and save time and resources. When a new irrigation is done, the points are
+reseted and you get again a new initial date to account for the irrigation
+time. Could just stop communicating new points when irrigating and make
+model reset after some time to avoid overheads, but that would make the
+system non-reliable against possible communication delays, so I would
+not recommend that.
+"""
+
+MODEL_TO_USE = "ML" #Linear/ML
 
 def setup_logger():
     handler = logging.StreamHandler()
@@ -16,32 +28,36 @@ def setup_logger():
     root_logger.addHandler(handler)
 
 
-#Usage example. In production you would want to accumulate seen points
-#up to the next irrigation and get the current step just by adding 1 each time.
-
 if __name__ == "__main__":
     
     setup_logger()
     logger = logging.getLogger()
     
+    df = pd.read_csv("data/1082-Device-Data-Fix.csv")
+    df = preprocess.get_clean_df(df) #Here use whatever function needed to correctly format the data
+    
     model = None
     
     if MODEL_TO_USE == "Linear":
+        #This training takes quite a lot of time since it searches for the best possible
+        #parameters, so I'd recommend to train once and load everytime after that.
         model = LinearModel()
+        model.load_plain_model("models/weights/XGBoost_plain_classifier.joblib")
         logger.info("Selected linear model")
+        
     elif MODEL_TO_USE == "ML":
+        #This gets trained really fast, so it is not really needed to store a model
+        #however, it can be saved and loaded if there is the need.
         model = MLModel()
+        model.train(df, save_model=False)
         logger.info("Selected ML model")
+        
     else:
-        logger.ERROR("Incorrect model selected")
+        logger.ERROR("Non-existing model selected")
         exit()
         
-    model.load_plain_model("models/weights/XGBoost_plain_classifier.joblib")
     
-    df = pd.read_csv("data/1082-Device-Data-Fix.csv")
-    df = preprocess.get_clean_df(df) #Here use whatever function needed to correctly format the data
-    df = model.process_dataframe(df)
-    
+    #Example date choosen for great visualization
     start_date = pd.to_datetime("2024-06-06 12:00:00")
     end_date   = pd.to_datetime("2024-06-11 05:00:00")
     
@@ -66,6 +82,23 @@ if __name__ == "__main__":
     plt.legend(loc="upper right")
     plt.ylabel("Soil moisture")
     plt.xlabel("Steps")
+    plt.ylim(0.20, 0.36)
+    plt.show()
+    
+    #Here we find capacitances. An anomaly detector or something like
+    #that should be added into this in production, so big outliers do 
+    #not hurt the user visualizaton when using it for normalization.
+    capacitance_detector = CapacitanceDetector()
+    capacitances = capacitance_detector.detect_capacitances(df)
+    plt.plot(df["date"], df["soil_moisture_40"], label="Soil moisture")
+    
+    plt.axvline(capacitances["date"].iloc[0], color="red", label="Capacitance")
+    for row in capacitances.iloc[1:].itertuples():
+        plt.axvline(row.date, color="red")
+
+    plt.legend(loc="upper right")
+    plt.ylabel("Soil moisture")
+    plt.xlabel("Date")
     plt.ylim(0.20, 0.36)
     plt.show()
 

@@ -1,167 +1,192 @@
 import pandas as pd
-from sklearn.linear_model import LinearRegression, RANSACRegressor
-import joblib
 import xgboost as xgb
 from utils import preprocess
 import numpy as np
-from sklearn.model_selection import train_test_split
-import optuna
 import joblib
 import os
 import logging
-from typing import List
+from typing import List, Union, Tuple
+from scipy.ndimage import gaussian_filter1d
+from sklearn.metrics import mean_absolute_error
 
 logger = logging.getLogger(__name__)
 
 class MLModel():
     
-    THRESH_DOWN = -0.1
-    THRESH_UP = 0.1
-    REQUIRED_COLUMNS = ["data", "soil_moisture_40"]
+    REQUIRED_COLUMNS = ["date", "soil_moisture_40"]
+    SEASON_ENUM = {"autumn" : 0, "spring" : 1, "summer" : 2, "winter" : 3}
     
     def __init__(self):
         
-        self.regressor = RANSACRegressor(
-            estimator=LinearRegression(fit_intercept=False),
-            min_samples=3,
-            residual_threshold=1.5,
-            random_state=0
-        )
-        
-        self.plain_detector = None 
+        self.regressor = None
         
     def _check_dataframe(self, df : pd.DataFrame):
         
         if not all(col in df.columns for col in self.REQUIRED_COLUMNS):
             raise ValueError(f"Missing required columns: {self.REQUIRED_COLUMNS}")
+    
+    def _get_steps(self, df : pd.DataFrame) -> pd.DataFrame:
         
-    def _process_dataframe(self, df : pd.DataFrame):
-        df_processed = preprocess.create_standarized_gradients(df)
-        df_processed = preprocess.create_steps_from_irrigation(df_processed)
-        plain_dates = preprocess.get_plains_dates()
+        df_steps = df
         
-        plain_dates = preprocess.get_plains_dates(df_processed, self.THRESH_DOWN, self.THRESH_UP)
+        orig_values = df_steps["soil_moisture_40"].to_numpy()
+        values = gaussian_filter1d(orig_values, sigma=2)
+        df_steps["soil_moisture_40"] = values
         
-        df_processed["plain"] = False
-        df_processed.loc[df_processed["date"].isin(plain_dates), "plain"] = True
+        df_steps["prev_value"] = df_steps["soil_moisture_40"].shift(1)
+        df_steps['difference'] = df_steps['soil_moisture_40'] - df_steps['prev_value']
+        df_steps["peak"] = False
+        df_steps["steps_from_peak"] = 0
         
-        return df_processed   
+        current_steps = -1
+        up = False
         
-    def _optimize_plain_model(self, X : pd.DataFrame, y : pd.DataFrame):
-        
-        def objective(trial):
-
-            params = {
-                "verbosity": 0,
-                "objective": "binary:logistic",
-                "eval_metric": "auc",
-                "max_depth": trial.suggest_int("max_depth", 3, 10),
-                "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
-                "gamma": trial.suggest_float("gamma", 0, 5),
-                "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-                "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-                "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
-                "reg_alpha": trial.suggest_float("reg_alpha", 0, 1),
-                "reg_lambda": trial.suggest_float("reg_lambda", 1, 10),
-            }
-
-            dtrain = xgb.DMatrix(X, label=y)
-            cv_results = xgb.cv(
-                params=params,
-                dtrain=dtrain,
-                nfold=3,
-                num_boost_round=1000,
-                early_stopping_rounds=20,
-                stratified=True,
-                seed=42,
-                verbose_eval=False
-            )
-
-            mean_auc = cv_results['test-auc-mean'].max()
-
-            return mean_auc
-        
-        logger.info("Beginning study for best parameters")
-        
-        study = optuna.create_study(direction="maximize")
-        study.optimize(objective, n_trials=50, show_progress_bar=True)
-        
-        logger.info("Best trial:")
-        logger.info("  Value (AUC):", study.best_value)
-        logger.info("  Params:")
-        for key, value in study.best_params.items():
-            logger.info(f"    {key}: {value}")
-
-        logger.info("Best hyperparameters:", study.best_params)
-        logger.info("Best loss:", study.best_value)
-
-        best_parameters = study.best_params.copy()
-        
-        final_model = xgb.XGBClassifier(**best_parameters)
-        final_model.fit(X, y)
-        return final_model
-        
-    def train_plain_model(self, df : pd.DataFrame, save_model : bool = False):
-        
-        self._check_dataframe(df)
-        df_processed = self._process_dataframe(df)
-        
-        df_decay = preprocess.get_dataset_from_df(df_processed, self.THRESH_UP)
-        
-        X = df_decay[["soil_moisture_40", "steps_from_peak", "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c"]]
-        y = df_decay["plain"]
-        self.plain_detector = self._optimize_plain_model(X, y)
-        
-        if save_model:
-            os.makedirs("models/weights", exist_ok=True)
-            joblib.dump(self.plain_detector, "models/weights/XGBoost_plain_classifier.joblib")
+        for row in df_steps.iloc[1:].itertuples(index=True):
+            down = row.difference <= 0
+            current_steps += 1
             
-        print("Model trained")
+            if not down:
+                df_steps.loc[row.Index, "peak"] = True
+                current_steps = -1
+            else:
+                df_steps.loc[row.Index, "steps_from_peak"] = current_steps
+                
+        df_steps["soil_moisture_40"] = orig_values
+        
+        return df_steps
     
-    def load_plain_model(self, path : str):
+    def _get_decays(self, df : pd.DataFrame) -> pd.DataFrame:
+        df_decay = df[~df["peak"]]
+        df_decay = df_decay.drop(columns=["irrigation_volume_0", "irrigation_volume_accumulated_0", "prev_value", "difference", "peak"])[1:].reset_index(drop=True)
+        df_decay["hour"] = df_decay["date"].dt.hour
+        df_decay["season"] = df_decay["date"].dt.month.apply(preprocess.get_season)
+        df_decay = pd.get_dummies(df_decay, columns=['season'])
+        df_decay['soil_moisture_next'] = df_decay['soil_moisture_40'].shift(-1)
+        df_decay['next_steps'] = df_decay['steps_from_peak'].shift(-1)
+        df_decay = df_decay[df_decay["next_steps"] != 0]
+        df_decay = df_decay.drop(columns=["date", "soil_moisture_20", "soil_moisture_60", "next_steps"])[:-1]
         
-        plain_detector = joblib.load(path)
+        return df_decay
+    
+    def _format_training_data(self, X : pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        X_train = X
         
-        if isinstance(self.plain_detector, xgb.XGBClassifier):
-            self.plain_detector = plain_detector
-            logger.info("Plain model loaded correctly")
-            return
+        X_train["Input_0"] = X_train["soil_moisture_40"]
+        X_train["Output_1"] = X_train["soil_moisture_40"].shift(-1)
+        X_train["Output_2"] = X_train["soil_moisture_40"].shift(-2)
+        X_train["Output_3"] = X_train["soil_moisture_40"].shift(-3)
+        X_train["season_autumn"] = X_train["season_autumn"].astype(bool)
+        X_train["season_summer"] = X_train["season_summer"].astype(bool)
+        X_train["season_spring"] = X_train["season_spring"].astype(bool)
+        X_train["current_step"] = X_train["steps_from_peak"].shift(-3)
+        X_train["hour"] = X_train["hour"]
+        X_train["hour_s"] = np.sin(2 * np.pi * X_train["hour"])
+        X_train["hour_c"] = np.cos(2 * np.pi * X_train["hour"])
+        condition = X_train["current_step"] >= 3
+        condition_full = ~X_train["Output_3"].isna() & condition
+        X_train = X_train.loc[condition_full]
+
+        y_train = X_train[["Output_1", "Output_2", "Output_3"]]
+        X_train = X_train[["Input_0", "current_step", "hour_s", "hour_c", "season_autumn", "season_spring", "season_summer"]]
         
-        raise TypeError(f"Expected XGBClassifier, got {type(plain_detector).__name__}")
+        return X_train, y_train
    
-    def _line_regression(self, previous_data : List[float]):
-        points = np.array(previous_data)
-        x = np.array([i for i in range(len(points))])
-        y = points
-        x0, y0 = x[0], y[0]
-        X = (x - x0).reshape(-1, 1)
-        Y = y - y0
-        self.regressor.fit(X, Y)
-        m = self.regressor.estimator_.coef_[0]
-        return m   
+    def _get_model_input(self, current_moisture : float, current_step : int, current_date : pd.Timestamp) -> pd.DataFrame:
     
-    def _get_plain_input(self, current_moisture : float, current_step : int, current_date : pd.Timestamp):
+        seasons = [False]*3
         
-        seasons = [False]*4
-        seasons[get_season(current_date.month)] = True
+        season = preprocess.get_season(current_date.month)
+        if season != "winter":
+            seasons[self.SEASON_ENUM[season]] = True
         
         hour_s = np.sin(2 * np.pi * current_date.hour)
         hour_c = np.cos(2 * np.pi * current_date.hour)
         
-        plain_input = [[current_moisture],
-                       [current_step],
+        model_input = [[current_moisture],
+                        [current_step],
+                        [hour_s, hour_c],
                         seasons,
-                       [hour_s, hour_c]
-                      ]
-        plain_input = np.concatenate(plain_input)
-        plain_input = pd.DataFrame(plain_input.reshape(1, -1), columns=["soil_moisture_40", "steps_from_peak", "season_autumn", "season_spring", "season_summer", "season_winter", "hour_s", "hour_c"])
+                        ]
         
-        return plain_input
+        model_input = np.concatenate(model_input)
+        model_input = pd.DataFrame(model_input.reshape(1, -1), columns=["Input_0", "current_step", "hour_s", "hour_c", "season_autumn", "season_spring", "season_summer"])
         
-    def predict_steps(self, previous_data : List[float], current_date : pd.Timestamp, current_step : int, future_steps : int):
-    
-        if self.plain_detector is None:
-            raise ValueError("Plain detector not trained or loaded")
+        return model_input
+   
+    def load_model(self, path : str):
+        """
+        Loads the model from a given file. It only accept XGBRegressors.
+        
+        Parameters
+        ----------
+        path : str
+            The path to the file containing the model. It must be a joblib containing an `XGBRegressor`
+        """
+        
+        regressor = joblib.load(path)
+        
+        if isinstance(regressor, xgb.XGBRegressor):
+            self.regressor = regressor
+            logger.info("Model loaded correctly")
+            return
+        
+        raise TypeError(f"Expected XGBRegressor, got {type(regressor).__name__}")
+   
+    def train(self, df : pd.DataFrame, save_model : bool = False):
+        """
+        Trains the model with the given dataframe.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            A DataFrame that must contain at least soil_moisture_40 and its associated timestamps (`[soil_moisture_40, date]`)
+        save_model : bool, optional
+            Whether to save the trained model or not. It will be saved in `models/weights/MLModel.joblib`. (Default is `False`)
+        """
+        self._check_dataframe(df)
+        
+        self.regressor = xgb.XGBRegressor()
+        
+        df_train = self._get_steps(df)
+        df_train = self._get_decays(df_train)
+        
+        train_data = df_train[["soil_moisture_40", "steps_from_peak", "hour", "season_autumn", "season_spring", "season_summer"]]
+        train_data["hour"] = train_data["hour"] / 24
+        
+        X_train, y_train = self._format_training_data(train_data)
+        self.regressor.fit(X_train, y_train)
+        train_pred = self.regressor.predict(X_train)
+        train_error = mean_absolute_error(y_train, train_pred)
+        
+        if save_model:
+            os.makedirs("models/weights", exist_ok=True)
+            joblib.dump(self.regressor, "models/weights/MLModel.joblib")
+        
+        print(f"Trained with training error : {train_error}")
+        
+    def predict_steps(self, previous_data : Union[List[float], np.ndarray], current_date : pd.Timestamp, current_step : int, future_steps : int) -> List[float]:
+        """
+        Forecasts the values of soil moisture for the given previous data.
+        
+        Parameters
+        ----------
+        previous_data : List[float] or np.ndarray
+            A list or array containing all the previous points to be considered. They must be points outside irrigation phase.
+        current_date : pd.Timestamp
+            The date of the last point measured and given in `previous_data`
+        current_step : int
+            The number of steps away from the first detection. Usually equal to the length of the `previous_data` list.
+        future_steps : int
+            How many steps in the future need to be forecasted
+            
+        Returns
+        --------
+        predictions : List[float]
+            A list containing all forecasted values
+
+        """
+        if self.regressor is None:
+            raise ValueError("Model not trained nor loaded")
         
         if not isinstance(previous_data, (list, np.ndarray)):
             raise TypeError(f"Expected list or np.ndarray, got {type(previous_data).__name__}")
@@ -169,40 +194,24 @@ class MLModel():
         if len(previous_data) < 3:
             raise ValueError(f"Previous data must have at least 3 elements, got {len(previous_data)}")
         
-        m = self._line_regression(previous_data)
-        b = previous_data[-1]
-        
         predictions = []
-        plain_steps = 0
         
         logger.info("Beggining prediction")
+        model_input = self._get_model_input(previous_data[-1], current_step, current_date)
         
-        plain_input = self._get_plain_input(previous_data[-1], current_step, current_date)
+        for _ in range(1, future_steps+1, 3):
+            
+            predicted = self.regressor.predict(model_input)
+            predictions.append(predicted.flatten())
+            
+            current_step += 3
+            current_date += pd.Timedelta(minutes=90)
+            
+            model_input = self._get_model_input(predictions[-1][-1], current_step, current_date)
+            
+        print(predictions)
+        predictions = np.concat(predictions)[:future_steps]
         
-        for step in range(1, future_steps+1):
-            
-            if self.plain_detector.predict(plain_input):
-                plain_steps += 1
-                prev_pred = predictions[-1]
-                predictions.append(prev_pred)
-            
-            else:
-                predictions.append(m*(step - plain_steps) + b)
-                
-            current_step += 1
-            current_date += pd.Timedelta(minutes=30)
-            
         logger.info("Prediction succeed")
             
         return predictions
-        
-               
-def get_season(month):
-    if month in [12, 1, 2]:
-        return 3
-    elif month in [3, 4, 5]:
-        return 1
-    elif month in [6, 7, 8]:
-        return 2
-    else:
-        return 0

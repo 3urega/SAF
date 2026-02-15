@@ -1,4 +1,8 @@
 import argparse
+"""
+This program takes a SAF csv and cleans it so it can later be correctly
+read by pandas and then processed.
+"""
 
 parser = argparse.ArgumentParser(description="Program to fix given device data")
 

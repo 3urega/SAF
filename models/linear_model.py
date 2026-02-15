@@ -4,20 +4,22 @@ import joblib
 import xgboost as xgb
 from utils import preprocess
 import numpy as np
-from sklearn.model_selection import train_test_split
 import optuna
-import joblib
 import os
 import logging
-from typing import List
+from typing import List, Union
 
 logger = logging.getLogger(__name__)
 
 class LinearModel():
+    """
+    A linear model to predict soil moisture decays mixed with an `XGBClassifier`
+    for plateau detection.
+    """
     
     THRESH_DOWN = -0.1
     THRESH_UP = 0.1
-    REQUIRED_COLUMNS = ["data", "soil_moisture_40"]
+    REQUIRED_COLUMNS = ["date", "soil_moisture_40"]
     SEASON_ENUM = {"autumn" : 0, "spring" : 1, "summer" : 2, "winter" : 3}
     
     def __init__(self):
@@ -36,7 +38,7 @@ class LinearModel():
         if not all(col in df.columns for col in self.REQUIRED_COLUMNS):
             raise ValueError(f"Missing required columns: {self.REQUIRED_COLUMNS}")
         
-    def _process_dataframe(self, df : pd.DataFrame):
+    def _process_dataframe(self, df : pd.DataFrame) -> pd.DataFrame:
         df_processed = preprocess.create_standarized_gradients(df)
         df_processed = preprocess.create_steps_from_irrigation(df_processed)
         
@@ -47,13 +49,7 @@ class LinearModel():
         
         return df_processed   
         
-    def process_dataframe(self, df : pd.DataFrame):
-        df_processed = df
-        df_processed["season"] = df_processed["date"].dt.month.apply(get_season)
-        df_processed = pd.get_dummies(df_processed, columns=['season'])
-        return df_processed
-        
-    def _optimize_plain_model(self, X : pd.DataFrame, y : pd.DataFrame):
+    def _optimize_plain_model(self, X : pd.DataFrame, y : pd.DataFrame) -> xgb.XGBClassifier:
         
         def objective(trial):
 
@@ -108,7 +104,16 @@ class LinearModel():
         return final_model
         
     def train_plain_model(self, df : pd.DataFrame, save_model : bool = False):
+        """
+        Trains the plain detector model with the given dataframe.
         
+        Parameters
+        ----------
+        df : pd.DataFrame
+            A DataFrame that must contain at least soil_moisture_40 and its associated timestamps (`[soil_moisture_40, date]`)
+        save_model : bool, optional
+            Whether to save the trained model or not. It will be saved in `models/weights/XGBoost_plain_classifier.joblib`. (Default is `False`)
+        """
         self._check_dataframe(df)
         df_processed = self._process_dataframe(df)
         
@@ -125,7 +130,14 @@ class LinearModel():
         print("Model trained")
     
     def load_plain_model(self, path : str):
+        """
+        Loads the plain detector model from a given file. It only accept XGBClassifiers.
         
+        Parameters
+        ----------
+        path : str
+            The path to the file containing the model. It must be a joblib containing an `XGBClassifier`
+        """
         plain_detector = joblib.load(path)
         
         if isinstance(plain_detector, xgb.XGBClassifier):
@@ -135,7 +147,7 @@ class LinearModel():
         
         raise TypeError(f"Expected XGBClassifier, got {type(plain_detector).__name__}")
    
-    def _line_regression(self, previous_data : List[float]):
+    def _line_regression(self, previous_data : List[float]) -> float:
         points = np.array(previous_data)
         x = np.array([i for i in range(len(points))])
         y = points
@@ -146,10 +158,10 @@ class LinearModel():
         m = self.regressor.estimator_.coef_[0]
         return m   
     
-    def _get_plain_input(self, current_moisture : float, current_step : int, current_date : pd.Timestamp):
+    def _get_plain_input(self, current_moisture : float, current_step : int, current_date : pd.Timestamp) -> pd.DataFrame:
         
         seasons = [False]*4
-        seasons[self.SEASON_ENUM[get_season(current_date.month)]] = True
+        seasons[self.SEASON_ENUM[preprocess.get_season(current_date.month)]] = True
         
         hour_s = np.sin(2 * np.pi * current_date.hour)
         hour_c = np.cos(2 * np.pi * current_date.hour)
@@ -164,8 +176,27 @@ class LinearModel():
         
         return plain_input
         
-    def predict_steps(self, previous_data : List[float], current_date : pd.Timestamp, current_step : int, future_steps : int):
-    
+    def predict_steps(self, previous_data : Union[List[float], np.ndarray], current_date : pd.Timestamp, current_step : int, future_steps : int) -> List[float]:
+        """
+        Forecasts the values of soil moisture for the given previous data.
+        
+        Parameters
+        ----------
+        previous_data : List[float] or np.ndarray
+            A list or array containing all the previous points to be considered. They must be points outside irrigation phase.
+        current_date : pd.Timestamp
+            The date of the last point measured and given in `previous_data`
+        current_step : int
+            The number of steps away from the first detection. Usually equal to the length of the `previous_data` list.
+        future_steps : int
+            How many steps in the future need to be forecasted
+            
+        Returns
+        --------
+        predictions : List[float]
+            A list containing all forecasted values
+
+        """
         if self.plain_detector is None:
             raise ValueError("Plain detector not trained or loaded")
         
@@ -201,15 +232,4 @@ class LinearModel():
             
         logger.info("Prediction succeed")
             
-        return predictions
-        
-               
-def get_season(month):
-    if month in [12, 1, 2]:
-        return 'winter'
-    elif month in [3, 4, 5]:
-        return 'spring'
-    elif month in [6, 7, 8]:
-        return 'summer'
-    else:
-        return 'autumn'
+        return predictions[:future_steps]
