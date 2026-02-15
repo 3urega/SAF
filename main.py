@@ -4,6 +4,7 @@ from models import LinearModel, MLModel, CapacitanceDetector
 from utils import preprocess
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 
 """
 Usage example. In production you would want to accumulate seen points
@@ -71,6 +72,70 @@ if __name__ == "__main__":
     df = df.loc[first_point:].copy()
     
     previous_values = df["soil_moisture_40"].iloc[:10].values
+    """
+    How these previous values are accumulated is really important for good
+    performance of the models. If the ML model is used, then there is no need
+    for any particular care. However, if the linear model is used, then it is
+    important that points corresponding to plateaus are removed from the values
+    given, since then it will mess up with the linear regression. Next there is
+    a commented pseudocode that is an example of how to eliminate these kind of points
+    when working with an accumulation of points.
+    """
+    
+    # new_point_to_add = recieve_new_point()
+    # grad = new_point_to_add - previous_values[-1]
+    # if (grad < THRESHOLD):
+    #     previous_values.append(new_point_to_add)
+
+    """
+    Another way to do this and try to not be too afected by sensor errors would
+    be to remove points once you have that a given amount of points were detected
+    as plateaus. You would allow some points on the data, but you would made sure
+    the detection has actually been a plateau.
+    """
+    
+    # new_point_to_add = recieve_new_point()
+    # grad = new_point_to_add - previous_values[-1]
+    # if (grad >= THRESHOLD):
+    #     plain_detected += 1
+    # else:
+    #     plain_detected = 0
+        
+    # previous_values.append(new_point_to_add)
+    
+    # if (plain_detected > NUM_OF_DETECTIONS):
+    #     previous_values = previous_values[:-1]
+    
+    """
+    A final recomendation would be to use standarized gradients instead, so
+    the values of the threshold are way more robust to changing the dataset.
+    This way you can make a general rule to get rid of points. To do so a big
+    amount of points should be stored to compute the standarized gradient with.
+    Since even the full story of points of a sensor does not take too much
+    memory, you could just have it all, and introduce the new points in it as
+    they arrive. Otherwise, you could have just a year worth of detections to have
+    the same results. Further reductions have not been tested by me, but it should
+    work nicely even with just a month of data as far as I'm concerned.
+    Of course, as one point arrives, the first point of the dataset can be erased, that
+    way you always have the same amount of points.
+    
+    This is the approach I used when developing the models. The previous two
+    are hard to tune for them to properly work, while this one allows for easier
+    tunning, so I would personally use this one.
+    
+    The thresholds used in the development have been:
+        THRESH_DOWN = -0.1
+        THRESH_UP = 0.1
+    """
+    
+    # new_point_to_add = recieve_new_point()
+    # df_month = df_mont.add_new_point(new_point_to_add)
+    # df_month = preprocess.create_standarized_gradients(df_month)
+    # if not (df_month.loc[idx, "gradient_std"] > THRESH_DOWN) & (df_month.loc[idx, "gradient_std"] <= THRESH_DOWN):
+    #     previous_values.append(df_month.iloc[-1, "soil_moisture_40"])
+    
+    
+    
     current_date = df["date"].iloc[9]
     
     predictions = model.predict_steps(previous_values, current_date, 10, 100)

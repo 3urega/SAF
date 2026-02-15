@@ -125,6 +125,8 @@ def create_standarized_gradients(df : pd.DataFrame) -> pd.DataFrame:
 
     df["gradient"] = df["soil_moisture_40"].diff()
     df["gradient_std"] = (df["gradient"] - df["gradient"].mean())/ df["gradient"].std()
+    
+    df["soil_moisture_40"] = orig_values
 
     return df
 
