@@ -33,6 +33,8 @@ Saf/
 └── main.py                         <- Usage example of final refactored classes
 ```
 
+The current main, without changing anything, expects the data to be in a folder called data.
+
 ## Expected input data
 
 The input DataFrames are expected to have at least the following columns:
