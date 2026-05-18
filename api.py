@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 import pandas as pd
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError, PartialCredentialsError
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -107,12 +107,21 @@ async def lifespan(app: FastAPI):
             flush=True,
         )
     else:
-        weights_storage.validate_bucket_access()
-        print(
-            f"SAF: almacén de pesos S3 accesible "
-            f"(bucket={weights_storage.bucket_name()}, región={weights_storage.region_name()})",
-            flush=True,
-        )
+        try:
+            weights_storage.validate_bucket_access()
+            print(
+                f"SAF: almacén de pesos S3 accesible "
+                f"(bucket={weights_storage.bucket_name()}, región={weights_storage.region_name()})",
+                flush=True,
+            )
+        except (NoCredentialsError, PartialCredentialsError):
+            print(
+                "SAF: aviso — no hay credenciales AWS válidas para boto3 "
+                "(perfil IAM, variables AWS_* o rol). No se ejecutó HeadBucket al arrancar; "
+                "los endpoints que usen S3 fallarán hasta que configures credenciales. "
+                "En desarrollo sin AWS puedes usar S3_SKIP_STARTUP_VALIDATION=1.",
+                flush=True,
+            )
     yield
 
 
