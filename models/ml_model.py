@@ -5,7 +5,7 @@ import numpy as np
 import joblib
 import os
 import logging
-from typing import List, Union, Tuple
+from typing import List, Union, Tuple, Optional
 from scipy.ndimage import gaussian_filter1d
 from sklearn.metrics import mean_absolute_error
 
@@ -61,6 +61,10 @@ class MLModel():
         df_decay["hour"] = df_decay["date"].dt.hour
         df_decay["season"] = df_decay["date"].dt.month.apply(preprocess.get_season)
         df_decay = pd.get_dummies(df_decay, columns=['season'])
+        # Asegurar que existan las 3 columnas de estación (el ML usa autumn, spring, summer; winter es referencia)
+        for col in ["season_autumn", "season_spring", "season_summer"]:
+            if col not in df_decay.columns:
+                df_decay[col] = 0
         df_decay['soil_moisture_next'] = df_decay['soil_moisture_40'].shift(-1)
         df_decay['next_steps'] = df_decay['steps_from_peak'].shift(-1)
         df_decay = df_decay[df_decay["next_steps"] != 0]
@@ -132,7 +136,7 @@ class MLModel():
         
         raise TypeError(f"Expected XGBRegressor, got {type(regressor).__name__}")
    
-    def train(self, df : pd.DataFrame, save_model : bool = False, model_name : str = "MLModel"):
+    def train(self, df : pd.DataFrame, save_model : bool = False, model_name : str = "MLModel", output_path : Optional[str] = None):
         """
         Trains the model with the given dataframe.
         
@@ -141,9 +145,13 @@ class MLModel():
         df : pd.DataFrame
             A DataFrame that must contain at least soil_moisture_40 and its associated timestamps (`[soil_moisture_40, date]`)
         save_model : bool, optional
-            Whether to save the trained model or not. It will be saved in `models/weights/MLModel.joblib`. (Default is `False`)
+            If True, persiste el regresor en disco. (Default is `False`)
         model_name : str, optional
-            The name you want to save the model with. (Default is 'MLModel')
+            Nombre base sin extensión; el archivo se escribe como ``models/weights/{model_name}.joblib``
+            salvo que se indique ``output_path``.
+            (Default is 'MLModel')
+        output_path : str, optional
+            Ruta completa del fichero .joblib. Si se indica, se usa en lugar de ``models/weights/{model_name}.joblib``.
         """
         self._check_dataframe(df)
         
@@ -161,8 +169,11 @@ class MLModel():
         train_error = mean_absolute_error(y_train, train_pred)
         
         if save_model:
-            os.makedirs("models/weights", exist_ok=True)
-            joblib.dump(self.regressor, f"models/weights/{model_name}.joblib")
+            path = output_path if output_path else f"models/weights/{model_name}.joblib"
+            out_dir = os.path.dirname(os.path.abspath(path))
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+            joblib.dump(self.regressor, path)
         
         logger.info(f"Trained with training error : {train_error}")
         
@@ -211,7 +222,7 @@ class MLModel():
             
             model_input = self._get_model_input(predictions[-1][-1], current_step, current_date)
             
-        predictions = np.concat(predictions)[:future_steps]
+        predictions = np.concatenate(predictions)[:future_steps]
         
         logger.info("Prediction succeed")
             

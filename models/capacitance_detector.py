@@ -30,8 +30,8 @@ class CapacitanceDetector():
     def _process_dataset(self, df : pd.DataFrame) -> pd.DataFrame:
         
         df_processed = df
-        df_processed["difference"] = np.concat([[np.nan], np.diff(df_processed["soil_moisture_40"])])
-        df_processed['difference2'] = np.concat([[np.nan], np.diff(df_processed['difference'])])
+        df_processed["difference"] = np.concatenate([[np.nan], np.diff(df_processed["soil_moisture_40"])])
+        df_processed['difference2'] = np.concatenate([[np.nan], np.diff(df_processed['difference'])])
         
         return df_processed
         

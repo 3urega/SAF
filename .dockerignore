@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.env
+*.md
+docs
+insomnia
+SAF_report.pdf
+.cursor

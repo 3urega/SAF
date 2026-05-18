@@ -1,47 +1,257 @@
 # SAF
 
-The report with the results and insights obtained from this project can be found [here](SAF_report.pdf)
+Sistema de **predicción y análisis de humedad del suelo** para riego agrícola. Usa datos de sensores para predecir la evolución de la humedad, detectar momentos de capacitancia y ayudar a decidir cuándo regar.
 
-## Installation
-Just need to do:
+El informe con los resultados e insights del proyecto se encuentra [aquí](SAF_report.pdf).
 
-```
+## Instalación
+
+```bash
 pip install -r requirements.txt
 ```
 
+## Cómo usar el proyecto
 
-## Structure
+### 1. Preparar los datos (si tienes un CSV crudo SAF)
 
-The structure of the repository is the next:
+Si tienes un archivo CSV en formato SAF original, primero hay que corregirlo:
 
-```
-Saf/
-├── logger                          <- Logger formater for better logging
-├── models                          <- Classes and weights of the proposed models
-│   └── weights                     <- Saved weights (well, complete models I think actually)
-├── notebooks                       <- Notebooks used for development. Need to be moved to root folder to work
-├── plots                           <- Obtained plots during development.
-│   ├── animations                  <- Animations obtained for easy visual understanding of models.
-│   ├── errors                      <- Error evolution plots
-│   └── preds                       <- Prediction example plots
-├── results                         <- Errors extracted from the models
-├── trainers                        <- Deprecated. Only needed for some dev. notebook
-├── utils                           <- Utility functions shared across modules
-├── compute_mean_losses_linear.py   <- Dev. script used to compute losses for the linear model
-├── compute_mean_losses_ML.py       <- Dev. script used to compute losses for the ML model
-├── preprocess_csv.py               <- Script to clean the SAF csv so they can be read by pandas
-└── main.py                         <- Usage example of final refactored classes
+```bash
+python preprocess_csv.py --path data/tu-archivo.csv
 ```
 
-The current main, without changing anything, expects the data to be in a folder called data.
+Esto genera `tu-archivo-Fix.csv` en la misma carpeta.
 
-## Expected input data
+### 2. Ejecutar el programa principal
 
-The input DataFrames are expected to have at least the following columns:
+```bash
+# Desde la carpeta del proyecto, ejecutar (usa modelo ML por defecto)
+python main.py
 
-| Column Name | Data type | Description |
-|-------------|-----------|-------------|
-| `date` | `pd.Timestamp` | The timestamp at which the moisture was measured |
-| `soil_moisture_40` | `float` | The value of soil moisture at depth 40 (cm I think)
+# Elegir modelo explícitamente
+python main.py --model ML      # modelo de Machine Learning (XGBoost)
+python main.py -m Linear       # modelo lineal
 
-Both models and the capacitance detector work with soil moistures at depth 40, since it seem to be the one behaving the best. If other soil moisture depths wanted to be used instead, you would need to change which soil moisture is the model trained on. It shouldn't be too difficult to do within the classes. Otherwise, you can allways change the name of the moisture you want to train to soil_moisture_40 and it will work seamesly. However, this depth is the recomended use case, since it has been developed with this data.
+# Ver ayuda
+python main.py --help
+```
+
+**Nota:** El script espera el archivo `data/1082-Device-Data-Fix.csv`. Si usas otro archivo, tendrás que modificar la ruta en `main.py`.
+
+### 3. Resultados
+
+Al ejecutar `main.py` se muestran dos gráficas:
+
+1. **Predicción vs real:** puntos azules (valores vistos), línea roja (predicciones), línea verde (valores reales).
+2. **Capacitancias:** humedad en el tiempo con líneas verticales rojas marcando los momentos de capacitancia (cuando el suelo deja de drenar y se estabiliza).
+
+## API REST
+
+El proyecto expone una API HTTP para integrarse con otros sistemas (por ejemplo Symfony/PHP).
+
+### Arrancar la API
+
+```bash
+uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+La documentación interactiva (Swagger) estará en `http://localhost:8000/docs`.
+
+### Desarrollo local con ngrok
+
+Para exponer la API local a internet (por ejemplo, para que un frontend en otro equipo o servicio la consuma):
+
+1. **Arrancar la API** en una terminal:
+
+```bash
+cd ruta/al/proyecto/SAF
+python -m venv venv          # solo la primera vez
+.\venv\Scripts\Activate      # Windows
+pip install -r requirements.txt
+uvicorn api:app --host 127.0.0.1 --port 8000
+```
+
+2. **Exponer con ngrok** en otra terminal:
+
+```bash
+ngrok http 8000
+```
+
+3. Ngrok mostrará una URL pública (ej. `https://abc123.ngrok-free.app`). Usa esa URL como base para las llamadas desde el frontend.
+
+4. **Comprobar:**
+   - Local: `http://127.0.0.1:8000/health`
+   - Público: `https://tu-url.ngrok-free.app/health`
+
+**Nota:** Si no tienes ngrok, descárgalo en [ngrok.com](https://ngrok.com/download).
+
+### Endpoints
+
+| Método | Ruta      | Descripción                |
+|--------|-----------|----------------------------|
+| GET    | /health   | Comprueba que el servicio está activo |
+| GET    | /sensors/{sensor_id}/weights | Estado de pesos Linear y ML (rutas y última versión ML) |
+| POST   | /train   | Entrena Linear o ML y guarda `sensor_{id}.joblib` o `ml_sensor_{id}_{fecha}.joblib` |
+| POST   | /predict  | Recibe datos y devuelve predicciones y capacitancias |
+
+### GET /sensors/{sensor_id}/weights
+
+Devuelve el estado de los artefactos guardados por sensor, sin duplicar rutas:
+
+- **Linear:** `models/weights/sensor_{sensor_id}.joblib`
+- **ML:** archivos versionados por fecha en UTC: `models/weights/ml_sensor_{sensor_id}_{YYYYMMDD}_{HHMMSS}.joblib`. En predicción se carga siempre el más reciente (por orden del sufijo en el nombre).
+
+Ejemplo de cuerpo de respuesta:
+
+```json
+{
+  "sensor_id": "1082",
+  "linear": { "has_weights": true, "path": "models/weights/sensor_1082.joblib" },
+  "ml": {
+    "has_weights": true,
+    "latest_path": "models/weights/ml_sensor_1082_20260211_143052.joblib",
+    "all_paths": ["models/weights/ml_sensor_1082_20260211_143052.joblib"]
+  }
+}
+```
+
+Si no hay pesos ML: `has_weights: false`, `latest_path: null`, `all_paths: []`.
+
+### POST /train (Linear o ML)
+
+- **Linear:** guarda en `models/weights/sensor_{sensor_id}.joblib`. Requiere al menos **500** puntos y ciclos de riego-secado (al menos un punto con `irrigation_volume_0 == 0`).
+- **ML:** guarda un archivo nuevo por cada entrenamiento con marca temporal **UTC** en el nombre: `ml_sensor_{sensor_id}_{YYYYMMDD}_{HHMMSS}.joblib`. Requiere también **500** puntos mínimo y la misma regla de riego-secado. La respuesta incluye el campo `path` del archivo creado.
+
+```json
+{
+  "sensor_id": "1082",
+  "model": "Linear",
+  "data": [
+    {"date": "2024-01-15 08:00:00", "soil_moisture_40": 0.35, "irrigation_volume_0": 10},
+    {"date": "2024-01-15 08:30:00", "soil_moisture_40": 0.34, "irrigation_volume_0": 0}
+  ]
+}
+```
+
+Para ML, usa `"model": "ML"` con el mismo formato de `data` (mínimo 500 filas).
+
+### POST /predict
+
+```json
+{
+  "data": [
+    {"date": "2024-06-06 12:00:00", "soil_moisture_40": 0.32, "irrigation_volume_0": 0},
+    {"date": "2024-06-06 12:30:00", "soil_moisture_40": 0.30, "irrigation_volume_0": 0}
+  ],
+  "model": "ML",
+  "sensor_id": "1082",
+  "previous_points": 10,
+  "predict_steps": 100
+}
+```
+
+- `data`: array de puntos con `date`, `soil_moisture_40`, `irrigation_volume_0` (obligatorios).
+- `model`: `"ML"` o `"Linear"` (por defecto `"ML"`).
+- **Linear:** carga `models/weights/sensor_{sensor_id}.joblib`. Sin archivo, respuesta **503** con instrucciones para entrenar.
+- **ML:** carga el `.joblib` ML **más reciente** para ese `sensor_id`. El modelo **no** se reentrena en cada petición; primero debe existir un entrenamiento vía `POST /train` con `"model": "ML"`. Sin artefactos, **503** con el patrón esperado `models/weights/ml_sensor_{sensor_id}_*.joblib`.
+- `sensor_id`: obligatorio para **Linear** y **ML**.
+- `previous_points`: puntos previos para la predicción (por defecto 10, mínimo **3**). Los **500** puntos son solo el mínimo recomendado para **entrenar** ML/Linear.
+- `predict_steps`: pasos futuros a predecir (por defecto 100).
+
+### Respuesta de POST /predict
+
+- `prediction_dates`: lista con la **misma longitud** que `predictions`. Cada elemento es el instante asignado a `predictions[i]`: anclado a la **última fecha** de `dates` (último punto de contexto) + **30 minutos** × (i + 1), coherente con la resolución temporal de `predict_steps` en los modelos Linear y ML.
+
+### Ejemplo de respuesta
+
+```json
+{
+  "previous_values": [0.32, 0.30, ...],
+  "predictions": [0.28, 0.27, ...],
+  "prediction_dates": ["2024-06-06 13:00:00", "2024-06-06 13:30:00", "..."],
+  "capacitances": [{"date": "2024-06-08T10:00:00", "value": 0.25}, ...],
+  "dates": ["2024-06-06 12:00:00", "2024-06-06 12:30:00", ...],
+  "ccpmp": 0.27
+}
+```
+
+## Estructura del repositorio
+
+```
+SAF/
+├── logger                          <- Formateador de logs
+├── models                          <- Clases y pesos de los modelos
+│   └── weights                     <- Modelos guardados
+├── notebooks                       <- Notebooks de desarrollo (mover a raíz para que funcionen)
+├── plots                           <- Gráficas obtenidas durante el desarrollo
+│   ├── animations                  <- Animaciones de visualización
+│   ├── errors                      <- Gráficas de evolución de errores
+│   └── preds                       <- Gráficas de predicción de ejemplo
+├── results                         <- Errores extraídos de los modelos
+├── trainers                        <- Deprecado. Solo para algunos notebooks
+├── utils                           <- Funciones auxiliares compartidas
+├── compute_mean_losses_linear.py   <- Script para calcular pérdidas del modelo lineal
+├── compute_mean_losses_ML.py       <- Script para calcular pérdidas del modelo ML
+├── api.py                          <- API REST (FastAPI) para predicción por HTTP
+├── preprocess_csv.py               <- Script para limpiar CSVs SAF y que pandas los lea
+└── main.py                         <- Ejemplo de uso de las clases
+```
+
+Los datos deben estar en una carpeta llamada `data`.
+
+## Formato del CSV crudo (preprocess_csv)
+
+El CSV que se pasa a `preprocess_csv.py` debe cumplir lo siguiente:
+
+### Estructura de las columnas
+
+- **Columna 1 (`day`):** valor antes del primer `,`
+- **Columna 2 (`date`):** valor entre el primer y el segundo `,`
+- **Resto (`data`):** el resto de columnas
+
+El script concatena `day` y `date` (sin espacio) para formar la columna `date` en el archivo Fix. Esa fecha final debe poder parsearse como `"%b %d %Y @ %H:%M:%S.%f"` (ej: `Jun 06 2024 @ 12:00:00.000`).
+
+### Columnas necesarias en la parte `data`
+
+| Columna                     | Descripción                                                                 |
+|----------------------------|-------------------------------------------------------------------------------|
+| `variable.name`             | Nombre de la variable: `soil_moisture`, `irrigation_volume`, etc.            |
+| `depth`                     | Profundidad en cm (20, 40, 60 para humedad; 0 para riego)                     |
+| `variable.normalized_value` | Valor normalizado de la medición (float)                                     |
+| `sensor.deviceSensorid`     | Se elimina tras el Fix                                                        |
+| `position`                  | Se elimina tras el Fix                                                        |
+| `sensor.idDecagon`          | Se elimina tras el Fix                                                        |
+| `variable.default_value_name` | Se elimina tras el Fix                                                     |
+
+### Formato largo
+
+Una fila por combinación de (fecha, variable, profundidad). Ejemplo conceptual para un mismo timestamp:
+
+```
+day, date, sensor.deviceSensorid, position, ..., variable.name, depth, variable.normalized_value, ...
+Fri, Jun 06 2024 @ 12:00:00.000, ..., soil_moisture, 40, 0.28, ...
+Fri, Jun 06 2024 @ 12:00:00.000, ..., soil_moisture, 20, 0.25, ...
+Fri, Jun 06 2024 @ 12:00:00.000, ..., irrigation_volume, 0, 0, ...
+```
+
+### Nota sobre comillas
+
+`preprocess_csv.py` elimina todas las comillas del archivo de salida, tanto en la cabecera como en los datos.
+
+## Datos de entrada esperados
+
+Los DataFrames de entrada deben tener al menos estas columnas tras el preprocesamiento (`get_clean_df` sobre el Fix):
+
+| Columna             | Tipo              | Descripción                                      |
+|---------------------|-------------------|--------------------------------------------------|
+| `date`              | `pd.Timestamp`    | Timestamp de la medición de humedad              |
+| `soil_moisture_40`  | `float`          | Humedad del suelo a profundidad 40 cm           |
+
+Ambos modelos y el detector de capacitancia usan la humedad a 40 cm, que es la que mejor comportamiento ha mostrado. Para usar otras profundidades habría que adaptar el entrenamiento; otra opción es renombrar la columna de humedad deseada a `soil_moisture_40`.
+
+También se requiere `irrigation_volume_0` para la lógica de riego y detección de capacitancias.
+
+## Modelos disponibles
+
+- **ML:** XGBRegressor; en la API, el entrenamiento persistente va a ficheros `ml_sensor_{id}_{UTC}.joblib` y la predicción carga el último por fecha en el nombre.
+- **Linear:** Regresión lineal (RANSAC) + detector de mesetas (XGBClassifier). Entrena más lento; se recomienda entrenar una vez y cargar el modelo guardado.

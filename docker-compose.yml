@@ -1,0 +1,19 @@
+# Uso en servidor (p. ej. EC2 con Docker Compose):
+#   1. Copia .env.example -> .env y completa bucket / región; en EC2 con rol IAM suele bastar AWS_REGION + S3_*.
+#   2. docker compose up -d --build
+#   3. Comprueba: curl http://SERVIDOR:8000/health
+#
+# Detrás de un proxy HTTPS (ALB, Nginx), publica solo el puerto 8000 internamente o mapea el que uses.
+
+services:
+  api:
+    build: .
+    image: sensor-ml-api:latest
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+    restart: unless-stopped

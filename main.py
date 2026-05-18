@@ -1,4 +1,5 @@
 from logger import logging_formater
+import argparse
 import logging
 from models import LinearModel, MLModel, CapacitanceDetector
 from utils import preprocess
@@ -18,8 +19,6 @@ system non-reliable against possible communication delays, so I would
 not recommend that.
 """
 
-MODEL_TO_USE = "ML" #Linear/ML
-
 def setup_logger():
     handler = logging.StreamHandler()
     handler.setFormatter(logging_formater.ColoredFormatter())
@@ -30,16 +29,24 @@ def setup_logger():
 
 
 if __name__ == "__main__":
-    
+    parser = argparse.ArgumentParser(description="Predicción de humedad del suelo")
+    parser.add_argument(
+        "--model", "-m",
+        choices=["Linear", "ML"],
+        default="ML",
+        help="Modelo a usar: Linear o ML (default: ML)",
+    )
+    args = parser.parse_args()
+
     setup_logger()
     logger = logging.getLogger()
-    
+
     df = pd.read_csv("data/1082-Device-Data-Fix.csv")
     df = preprocess.get_clean_df(df) #Here use whatever function needed to correctly format the data
-    
+
     model = None
-    
-    if MODEL_TO_USE == "Linear":
+
+    if args.model == "Linear":
         #This training takes a bit of time since it searches for the best possible
         #parameters, so I'd recommend to train once and load everytime after that to
         #avoid any overhead.
@@ -48,7 +55,7 @@ if __name__ == "__main__":
         model.load_plain_model("models/weights/XGBoost_plain_classifier_new.joblib")
         logger.info("Selected linear model")
         
-    elif MODEL_TO_USE == "ML":
+    elif args.model == "ML":
         #This gets trained really fast, so it is not really needed to store a model
         #however, it can be saved and loaded if there is the need.
         model = MLModel()
